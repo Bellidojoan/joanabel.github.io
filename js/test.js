@@ -1,188 +1,239 @@
-/**
-  test.js
-  Ejemplo Three.js_r140: Cubo RGB con iluminacion y textura
+// Importaciones de Three.js y componentes necesarios
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Audio, AudioListener, AudioLoader } from 'three';
 
-  Cubo con color por vertice y mapa de uvs usando la clase BufferGeometry.
-  La textura es una unica imagen en forma de cubo desplegado en cruz horizontal.
-  Cada cara se textura segun mapa uv en la textura.
-  En sentido antihorario las caras son:
-    Delante:   7,0,3,4
-    Derecha:   0,1,2,3
-    Detras:    1,6,5,2
-    Izquierda: 6,7,4,5
-    Arriba:    3,2,5,4
-    Abajo:     0,7,6,1
-  Donde se han numerado de 0..7 los vertices del cubo.
-  Los atributos deben darse por vertice asi que necesitamos 8x3=24 vertices pues
-  cada vertice tiene 3 atributos de normal, color y uv al ser compartido por 3 caras. 
+// Configuración inicial de la escena, cámara y renderizador
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(4.61, 2.74, 8);
+const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+renderer.shadowMap.enabled = true;
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
 
-  @author rvivo@upv.es (c) Libre para fines docentes
-*/
+// Configuración del audio
+const listener = new AudioListener();
+camera.add(listener);
+const audioLoader = new AudioLoader();
 
-var renderer, scene, camera, cubo;
-var cameraControls;
-var angulo = -0.01;
+// Cargar y configurar el sonido de salto
+const jumpSound = new Audio(listener);
+audioLoader.load('../audios/jump.mp3', function(buffer) {
+    jumpSound.setBuffer(buffer);
+    jumpSound.setVolume(1.0); // Ajusta el volumen según necesites
+});
 
-init();
-loadCubo(1.0);
-render();
+// Carga y reproduce música de fondo
+const backgroundMusic = new THREE.Audio(listener);
+const musicLoader = new THREE.AudioLoader();
+musicLoader.load('../audios/music.mp3', function(buffer) { // Asegúrate de tener la ruta correcta a tu archivo mp3
+  backgroundMusic.setBuffer(buffer);
+  backgroundMusic.setLoop(true);
+  backgroundMusic.setVolume(0.3); // Establece el volumen a un nivel adecuado para música de fondo
+  backgroundMusic.play();
+});
 
-function init()
-{
-  renderer = new THREE.WebGLRenderer();
-  renderer.setSize( window.innerWidth, window.innerHeight );
-  renderer.setClearColor( new THREE.Color(0xFFFFFF) );
-  document.getElementById('container').appendChild( renderer.domElement );
+// Definición de la clase Box
+class Box extends THREE.Mesh {
+    constructor({ width, height, depth, color = '#00ff00', velocity = { x: 0, y: 0, z: 0 }, position = { x: 0, y: 0, z: 0 }, zAcceleration = false }) {
+        super(new THREE.BoxGeometry(width, height, depth), new THREE.MeshStandardMaterial({ color }));
+        this.width = width;
+        this.height = height;
+        this.depth = depth;
+        this.position.set(position.x, position.y, position.z);
+        this.velocity = velocity;
+        this.gravity = -0.002;
+        this.zAcceleration = zAcceleration;
+        this.updateSides();
+    }
 
-  scene = new THREE.Scene();
+    updateSides() {
+        this.right = this.position.x + this.width / 2;
+        this.left = this.position.x - this.width / 2;
+        this.bottom = this.position.y - this.height / 2;
+        this.top = this.position.y + this.height / 2;
+        this.front = this.position.z + this.depth / 2;
+        this.back = this.position.z - this.depth / 2;
+    }
 
-  var aspectRatio = window.innerWidth / window.innerHeight;
-  camera = new THREE.PerspectiveCamera( 50, aspectRatio , 0.1, 100 );
-  camera.position.set( 1, 1.5, 2 );
-  camera.lookAt(0,0,0);
+    update(ground) {
+        this.updateSides();
+        if (this.zAcceleration) this.velocity.z += 0.0003;
+        this.position.x += this.velocity.x;
+        this.position.z += this.velocity.z;
+        this.applyGravity(ground);
+    }
 
-  cameraControls = new THREE.OrbitControls( camera, renderer.domElement );
-  cameraControls.target.set( 0, 0, 0 );
-
-  window.addEventListener('resize', updateAspectRatio );
+    applyGravity(ground) {
+        this.velocity.y += this.gravity;
+        if (boxCollision({ box1: this, box2: ground })) {
+            const friction = 0.5;
+            this.velocity.y *= -friction;
+        } else {
+            this.position.y += this.velocity.y;
+        }
+    }
 }
 
-function loadCubo(lado)
-{
-  // Instancia el objeto BufferGeometry
-	var malla = new THREE.BufferGeometry();
-  // Construye la lista de coordenadas y colores por vertice
-  var semilado = lado/2.0;
-  var coordenadas = [ // 6caras x 4vert x3coor = 72float
-                // Front 
-                -semilado,-semilado, semilado, // 7 -> 0
-                semilado,-semilado, semilado,  // 0 -> 1
-                semilado, semilado, semilado,  // 3 -> 2
-                -semilado, semilado, semilado, // 4 -> 3
-                // Right
-                semilado,-semilado, semilado,  // 0 -> 4
-                semilado,-semilado,-semilado,  // 1 -> 5
-                semilado, semilado,-semilado,  // 2 -> 6
-                semilado, semilado, semilado,  // 3 -> 7
-                // Back
-                semilado,-semilado,-semilado,  // 1 -> 8
-                -semilado,-semilado,-semilado, // 6 -> 9
-                -semilado, semilado,-semilado, // 5 ->10
-                semilado, semilado,-semilado,  // 2 ->11
-                // Left
-                -semilado,-semilado,-semilado, // 6 ->12
-                -semilado,-semilado, semilado, // 7 ->13
-                -semilado, semilado, semilado, // 4 ->14
-                -semilado, semilado,-semilado, // 5 ->15
-                // Top
-                semilado, semilado, semilado,  // 3 ->16
-                semilado, semilado,-semilado,  // 2 ->17
-                -semilado, semilado,-semilado, // 5 ->18
-                -semilado, semilado, semilado, // 4 ->19
-                // Bottom
-                semilado,-semilado, semilado,  // 0 ->20
-                -semilado,-semilado, semilado, // 7 ->21 
-                -semilado,-semilado,-semilado, // 6 ->22
-                semilado,-semilado,-semilado   // 1 ->23
-  ]
-  var colores = [ // 24 x3
-                0,0,0,   // 7
-                1,0,0,   // 0
-                1,1,0,   // 3
-                0,1,0,   // 4
-
-                1,0,0,   // 0
-                1,0,1,   // 1
-                1,1,1,   // 2
-                1,1,0,   // 3
-
-                1,0,1,   // 1
-                0,0,1,   // 6
-                0,1,1,   // 5
-                1,1,1,   // 2
-
-                0,0,1,   // 6
-                0,0,0,   // 7
-                0,1,0,   // 4
-                0,1,1,   // 5
-
-                1,1,0,   // 3
-                1,1,1,   // 2
-                0,1,1,   // 5
-                0,1,0,   // 4
-
-                1,0,0,   // 0
-                0,0,0,   // 7
-                0,0,1,   // 6
-                1,0,1    // 1
-  ]
-  var normales = [ // 24 x3
-                0,0,1, 0,0,1, 0,0,1, 0,0,1,      // Front
-                1,0,0, 1,0,0, 1,0,0, 1,0,0,      // Right
-                0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,  // Back 
-                -1,0,0, -1,0,0, -1,0,0, -1,0,0,  // Left
-                0,1,0, 0,1,0, 0,1,0, 0,1,0,      // Top 
-                0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0   // Bottom
-                ];
-  var uvs = [  // 24 x2
-               // Front
-                0/4,1/3 , 1/4,1/3 , 1/4,2/3 , 0/4,2/3 , // 7,0,3,4
-                1/4,1/3 , 2/4,1/3 , 2/4,2/3 , 1/4,2/3 , // 0,1,2,3
-                2/4,1/3 , 3/4,1/3 , 3/4,2/3 , 2/4,2/3 , // 1,6,5,2
-                3/4,1/3 , 4/4,1/3 , 4/4,2/3 , 3/4,2/3 , // 6,7,4,5
-                1/4,2/3 , 2/4,2/3 , 2/4,3/3 , 1/4,3/3 , // 3,2,5,4
-                1/4,1/3 , 1/4,0/3 , 2/4,0/3 , 2/4,1/3   // 0,7,6,1
-            ];
-  var indices = [ // 6caras x 2triangulos x3vertices = 36
-              0,1,2,    2,3,0,    // Front
-              4,5,6,    6,7,4,    // Right 
-              8,9,10,   10,11,8,  // Back
-              12,13,14, 14,15,12, // Left
-              16,17,18, 18,19,16, // Top
-              20,21,22, 22,23,20  // Bottom
-                 ];
-
-  scene.add( new THREE.DirectionalLight() );
-
-  // Geometria por att arrays en r140
-  malla.setIndex( indices );
-  malla.setAttribute( 'position', new THREE.Float32BufferAttribute(coordenadas,3));
-  malla.setAttribute( 'normal', new THREE.Float32BufferAttribute(normales,3));
-  malla.setAttribute( 'color', new THREE.Float32BufferAttribute(colores,3));
-  malla.setAttribute( 'uv', new THREE.Float32BufferAttribute(uvs,2));
-
-  // Configura un material
-  var textura = new THREE.TextureLoader().load( 'images/ilovecg.png' );
-  var material = new THREE.MeshLambertMaterial( { vertexColors: true, map: textura, side: THREE.DoubleSide } );
-
-  // Construye el objeto grafico 
-  console.log(malla);   //-> Puedes consultar la estructura del objeto
-  cubo = new THREE.Mesh( malla, material );
-
-	// Añade el objeto grafico a la escena
-	scene.add( cubo );
+// Extensión de la clase Box para crear BonusBox
+class BonusBox extends Box {
+    constructor(options) {
+        super(options);
+        this.isBonus = true; // Esta propiedad identifica el bloque como un bloque de bonificación
+    }
 }
 
-function updateAspectRatio()
-{
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+// Función para detectar colisiones entre cajas
+function boxCollision({ box1, box2 }) {
+    const xCollision = box1.right >= box2.left && box1.left <= box2.right;
+    const yCollision = box1.bottom + box1.velocity.y <= box2.top && box1.top >= box2.bottom;
+    const zCollision = box1.front >= box2.back && box1.back <= box2.front;
+    return xCollision && yCollision && zCollision;
 }
 
-function update()
-{
-  // Cambios para actualizar la camara segun mvto del raton
-  cameraControls.update();
+// Creación de objetos en la escena
+const cube = new Box({ width: 1, height: 1, depth: 1, velocity: { x: 0, y: -0.01, z: 0 } });
+cube.castShadow = true;
+scene.add(cube);
 
-  // Movimiento propio del cubo
-  cubo.rotation.y += angulo;
-  cubo.rotation.x += angulo/2;
-}
+const ground = new Box({ width: 10, height: 0.5, depth: 50, color: '#0369a1', position: { x: 0, y: -2, z: 0 } });
+ground.receiveShadow = true;
+scene.add(ground);
 
-function render()
-{
-	requestAnimationFrame( render );
-	update();
-	renderer.render( scene, camera );
+// Configuración de luces
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(0, 3, 1);
+light.castShadow = true;
+scene.add(light);
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+// Manejo de eventos de teclado y lógica de juego
+const keys = { a: { pressed: false }, d: { pressed: false }, s: { pressed: false }, w: { pressed: false } };
+window.addEventListener('keydown', (event) => {
+    switch (event.code) {
+        case 'KeyA':
+        case 'ArrowLeft':
+            keys.a.pressed = true;
+            break;
+        case 'KeyD':
+        case 'ArrowRight':
+            keys.d.pressed = true;
+            break;
+        case 'KeyS':
+        case 'ArrowDown':
+            keys.s.pressed = true;
+            break;
+        case 'KeyW':
+        case 'ArrowUp':
+            keys.w.pressed = true;
+            break;
+        case 'Space':
+            cube.velocity.y = 0.08;
+            if (!jumpSound.isPlaying) {
+                jumpSound.play();
+            }
+            break;
+    }
+});
+window.addEventListener('keyup', (event) => {
+    switch (event.code) {
+        case 'KeyA':
+        case 'ArrowLeft':
+            keys.a.pressed = false;
+            break;
+        case 'KeyD':
+        case 'ArrowRight':
+            keys.d.pressed = false;
+            break;
+        case 'KeyS':
+        case 'ArrowDown':
+            keys.s.pressed = false;
+            break;
+        case 'KeyW':
+        case 'ArrowUp':
+            keys.w.pressed = false;
+            break;
+    }
+});
+
+// Sistema de puntuación
+let score = 0;
+const scoreElement = document.createElement('div');
+scoreElement.style.cssText = 'position: absolute; top: 10px; left: 10px; color: white; font-family: Arial; font-size: 30px; z-index: 100;';
+document.body.appendChild(scoreElement);
+function updateScore() {
+    scoreElement.innerHTML = `Puntuación: ${score}`;
 }
+setInterval(() => {
+    if (!isGameOver) {
+        score++;
+        updateScore();
+    }
+}, 1000);
+
+// Bucle de animación y lógica para spawnear enemigos
+let frames = 0;
+let spawnRate = 200;
+let isGameOver = false;
+const enemies = [];
+function animate() {
+    const animationId = requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+
+    cube.velocity.x = 0;
+    cube.velocity.z = 0;
+    if (keys.a.pressed) cube.velocity.x = -0.05;
+    else if (keys.d.pressed) cube.velocity.x = 0.05;
+    if (keys.s.pressed) cube.velocity.z = 0.05;
+    else if (keys.w.pressed) cube.velocity.z = -0.05;
+    cube.update(ground);
+
+    enemies.forEach((enemy, index) => {
+        enemy.update(ground);
+        if (boxCollision({ box1: cube, box2: enemy })) {
+            if (enemy.isBonus) {
+                score += 100; // Aumenta más puntos si es un BonusBox
+                updateScore();
+                scene.remove(enemy); // Elimina el BonusBox de la escena
+                enemies.splice(index, 1); // Elimina el BonusBox del array de enemigos
+            } else {
+                cancelAnimationFrame(animationId);
+                isGameOver = true;
+            }
+        }
+    });
+
+    if (frames % spawnRate === 0) {
+        if (spawnRate > 20) spawnRate -= 20;
+        let box;
+        if (Math.random() < 0.1) { // Probabilidad de generar un BonusBox
+            box = new BonusBox({
+                width: 1,
+                height: 1,
+                depth: 1,
+                position: { x: (Math.random() - 0.5) * 10, y: 0, z: -20 },
+                velocity: { x: 0, y: 0, z: 0.005 },
+                color: 'green', // Color distintivo para el BonusBox
+                zAcceleration: true
+            });
+        } else {
+            box = new Box({
+                width: 1,
+                height: 1,
+                depth: 1,
+                position: { x: (Math.random() - 0.5) * 10, y: 0, z: -20 },
+                velocity: { x: 0, y: 0, z: 0.005 },
+                color: 'red',
+                zAcceleration: true
+            });
+        }
+        box.castShadow = true;
+        scene.add(box);
+        enemies.push(box);
+    }
+
+    frames++;
+}
+animate();
